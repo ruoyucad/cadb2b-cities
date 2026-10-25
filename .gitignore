@@ -1,0 +1,16 @@
+# DuckDB database and data files
+*.duckdb
+data/
+
+# Local run logs and state
+*.log
+seen*.json
+state*.json
+
+# Python caches
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Snapshot sync metadata (never committed)
+*.muse-github-snapshot-sync.json
