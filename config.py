@@ -36,6 +36,52 @@ BIDSANDTENDERS_SITES = [
     ("haltonregion",  "Halton Region"),
 ]
 
+# bids&tenders buyers outside Ontario (v2, verified live 2026-10-25: the
+# subdomain serves a real BidsHomepage with a NodeId; the platform also has
+# wildcard subdomains that 404 or show a generic vendor page — those are NOT
+# portals and must not be added here).
+BIDSANDTENDERS_SITES_NATIONAL = [
+    ("saskatoon",     "City of Saskatoon"),
+    ("halifax",       "Halifax Regional Municipality"),
+    ("moncton",       "City of Moncton"),
+    ("stjohns",       "City of St. John's"),
+    ("yellowknife",   "City of Yellowknife"),
+]
+
+# British Columbia: the BC Bid portal itself is gated by a Google reCAPTCHA
+# browser check, so the pipeline uses the official open-data route instead —
+# BC Data Catalogue (CKAN) "Ministry Contract Awards" quarterly CSVs.
+# Awards only (like Toronto): supplier, award total, award date.
+BC_CKAN = "https://catalogue.data.gov.bc.ca"
+BC_AWARDS_DATASET = "ministry-contract-awards-province-of-british-columbia"
+BC_PORTAL_URL = ("https://catalogue.data.gov.bc.ca/dataset/"
+                 "ministry-contract-awards-province-of-british-columbia")
+
+# Quebec: the SEAO portal sells document/award access, but the same notices
+# are published as open data (OCDS JSON, weekly + monthly files) on
+# Données Québec (CKAN). Native mainProcurementCategory gives Goods directly.
+SEAO_CKAN = "https://www.donneesquebec.ca/recherche"
+SEAO_DATASET_ID = "d23b2e02-085d-43e5-9e6e-e1d558ebfdd5"
+SEAO_PORTAL_URL = ("https://www.donneesquebec.ca/recherche/dataset/"
+                   "systeme-electronique-d-appel-d-offres-seao")
+
+# Saskatchewan: SaskTenders list pages are server-rendered and public
+# (documents and award-result PDFs sit behind the login, so awarded rows
+# carry no supplier/value — same thin layer as bids&tenders).
+SASK_BASE = "https://www.sasktenders.ca"
+SASK_STATUS_IDS = {
+    "Open":      "54c953b7-cbe6-4e0d-a828-5df0d39e784d",
+    "Closed":    "20d4244f-b5ea-4dcb-b5ec-7f71c35890a3",
+    "No Award":  "7d1928f0-9f15-4b65-bfd9-4504373561dd",
+    "Awarded":   "83773de3-960f-416f-a511-bbd76ff1812f",
+    "Cancelled": "f6db1a11-acfc-4a1f-b891-43b065e1ddc1",
+}
+SASK_PAGE_SIZE = 50
+SASK_MAX_PAGES = {"Open": 40, "Awarded": 40, "Closed": 12}
+# Awarded competitions can lag their closing date; keep paging while the
+# page's oldest close date is within window + this lag.
+SASK_AWARD_LAG_DAYS = 45
+
 # Discovery windows. First run seeds a wider awarded window; steady-state
 # twice-weekly runs only need the recent window (older rows already stored).
 AWARDED_WINDOW_DAYS_FIRST = 120
@@ -64,25 +110,31 @@ HARD_EXCLUSIONS = [
     "hazardous", "ammunition", "firearm", "weapon", "alcohol", "liquor",
     "cement", "aggregate", "asphalt", "gravel", "ready-mix", "ready mix",
     "livestock", "animal feed",
+    # French (SEAO/Quebec rows): vehicle, fuel, food, pharma.
+    "véhicule", "carburant", "denrée", "alimentaire", "pharmaceutique",
+    "médicament", "gravier", "béton", "asphalte",
 ]
 
 # (keywords, unspsc segment) — order matters: first hit wins.
 WHITELIST: list[tuple[list[str], str]] = [
     (["personal protective", "ppe", "respirator", "protective clothing",
-      "safety glove", "safety equipment", "fall protection"], "46"),
+      "safety glove", "safety equipment", "fall protection",
+      "équipement de protection"], "46"),
     (["furniture", "desk", "chair", "cabinet", "locker", "seating",
-      "furnishing", "shelving", "bookcase"], "56"),
+      "furnishing", "shelving", "bookcase", "mobilier"], "56"),
     (["uniform", "apparel", "clothing", "textile", "linen", "garment",
-      "footwear", "curtain"], "53"),
+      "footwear", "curtain", "vêtement", "habillement"], "53"),
     (["janitorial", "cleaning supplies", "cleaning product", "detergent",
-      "paper towel", "toilet tissue", "garbage bag", "mop", "custodial"], "47"),
-    (["lighting", "led ", "luminaire", "lamp", "light fixture"], "39"),
+      "paper towel", "toilet tissue", "garbage bag", "mop", "custodial",
+      "produits d'entretien", "articles de nettoyage"], "47"),
+    (["lighting", "led ", "luminaire", "lamp", "light fixture",
+      "éclairage"], "39"),
     (["hand tool", "power tool", "tools and", "hardware", "fastener",
-      "locksmith", " padlock", "measuring tool"], "27"),
+      "locksmith", " padlock", "measuring tool", "outillage"], "27"),
     (["computer accessor", "peripheral", "keyboard", "mouse", "cable",
       "charging", "monitor arm", "docking"], "43"),
     (["office supplies", "stationery", "office paper", "printing paper",
-      "toner", "ink cartridge"], "44"),
+      "toner", "ink cartridge", "fournitures de bureau", "papeterie"], "44"),
     (["sports equipment", "recreational equipment", "playground",
       "fitness equipment"], "49"),
     (["musical instrument", "educational supplies", "toys and games",

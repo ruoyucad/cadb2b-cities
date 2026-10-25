@@ -39,6 +39,44 @@ CREATE TABLE IF NOT EXISTS ref_muni_category_map (
 """
 
 
+_DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M",
+                 "%b %d, %Y", "%B %d, %Y", "%m/%d/%Y", "%d/%m/%Y")
+
+
+def to_date(raw) -> str | None:
+    """Loose date parser for the provincial sources -> ISO 'YYYY-MM-DD'.
+
+    Accepts date/datetime objects and the string shapes the portals use
+    (ISO dates/datetimes, 'Mon DD, YYYY', slash dates). Returns None for
+    blanks, placeholders ('N/A', '-') and unparseable values.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw.date().isoformat()
+    if hasattr(raw, "isoformat") and not isinstance(raw, str):
+        try:
+            return raw.isoformat()[:10]
+        except Exception:
+            return None
+    txt = str(raw).strip()
+    if not txt or txt in ("-", "N/A", "n/a"):
+        return None
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(txt, fmt).date().isoformat()
+        except ValueError:
+            continue
+    head = txt.split(" ")[0]
+    if head != txt:
+        for fmt in _DATE_FORMATS:
+            try:
+                return datetime.strptime(head, fmt).date().isoformat()
+            except ValueError:
+                continue
+    return None
+
+
 def connect(db_path) -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(str(db_path))
     con.execute(SUPPLIER_KEY_MACRO)
@@ -68,12 +106,22 @@ def _segment_names(con) -> dict[str, tuple[str, str]]:
         return {}
 
 
+_WHITELIST_SEGMENTS = {seg for _, seg in WHITELIST}
+_UNSPSC_TOKEN = re.compile(r"unspsc_segment:(\d{2})")
+
+
 def classify_goods(title: str | None, categories: str | None) -> tuple[str, str] | None:
     """Returns (segment, matched_keyword) or None. Exclusions win first."""
     text = f"{title or ''} {categories or ''}".lower()
     for bad in HARD_EXCLUSIONS:
         if bad in text:
             return None
+    # Portals that carry a native UNSPSC classification (SEAO open data)
+    # embed an explicit token in categories_raw; the code's top-level
+    # segment is authoritative — but only brokerable segments count.
+    m = _UNSPSC_TOKEN.search(text)
+    if m and m.group(1) in _WHITELIST_SEGMENTS:
+        return m.group(1), f"unspsc:{m.group(1)}"
     for keywords, segment in WHITELIST:
         for kw in keywords:
             if kw in text:
@@ -101,11 +149,12 @@ def rebuild_mart(con) -> int:
             "bid_classification", "categories_raw", "status", "publish_date",
             "closing_date", "award_date", "awarded_supplier_raw", "awarded_value",
             "all_bidders_json", "plan_takers_count"]
-    fct_keys = set()
+    fct_index: dict[tuple, list] = {}
     try:
-        fct_keys = {(r[0], r[1], r[2]) for r in con.execute(
-            "SELECT supplier_key, year(award_date), value_cad FROM fct_contract "
-            "WHERE supplier_key IS NOT NULL AND award_date IS NOT NULL").fetchall()}
+        for sk, yr, val in con.execute(
+                "SELECT supplier_key, year(award_date), value_cad FROM fct_contract "
+                "WHERE supplier_key IS NOT NULL AND award_date IS NOT NULL").fetchall():
+            fct_index.setdefault((sk, yr), []).append(val)
     except duckdb.Error:
         pass
     leads, map_rows = [], set()
@@ -130,8 +179,8 @@ def rebuild_mart(con) -> int:
         possible_dup = False
         if skey and r["award_date"] and r["awarded_value"]:
             yr = r["award_date"].year
-            possible_dup = any(sk == skey and y == yr and v and abs(v - r["awarded_value"]) / r["awarded_value"] < 0.01
-                               for (sk, y, v) in fct_keys)
+            possible_dup = any(v and abs(v - r["awarded_value"]) / r["awarded_value"] < 0.01
+                               for v in fct_index.get((skey, yr), ()))
         n_bidders = None
         if r["all_bidders_json"]:
             try:
